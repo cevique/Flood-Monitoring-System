@@ -1,12 +1,19 @@
-// Flood monitor - simple test
+// Flood monitor - debounce + hysteresis
 const int trigPin = 9;
 const int echoPin = 8;
 const int ledPin  = 7;
 const int buzzerPin = 6;
 
-long duration;  //  time (in microseconds) between the HC‑SR04 sending the ultrasonic pulse and receiving its echo
-float distanceCm; //  distance between HC-SR04 and water level
-const float thresholdCm = 15.0; // set critical level in cm
+long duration;            // time (µs) between send and receive
+float distanceCm;         // measured distance from sensor to water
+float normalCm = 50.0;    // example baseline normal (set after observing Serial)
+const float thresholdCm = 15.0; // critical level (enter alarm) in cm
+const float hysteresisCm = 3.0; // stay-in-alarm margin
+
+// debounce / stability settings
+const int alarmLimit = 3; // number of consecutive readings required to enter alarm
+int alarmCount = 0;
+bool alarmState = false;  // true when alarm is active
 
 void setup() {
   pinMode(trigPin, OUTPUT);
@@ -35,9 +42,39 @@ void loop() {
   Serial.print("Distance (cm): ");
   Serial.println(distanceCm);
 
-  if (distanceCm <= thresholdCm) {
+  // hysteresis thresholds
+  float enterThreshold = thresholdCm;            // go into alarm when <= this
+  float leaveThreshold = thresholdCm + hysteresisCm; // exit alarm when > this
+
+  // debounce + hysteresis logic
+  if (!alarmState) {
+    // not currently alarming: require consecutive readings <= enterThreshold
+    if (distanceCm <= enterThreshold) {
+      alarmCount++;
+      if (alarmCount >= alarmLimit) {
+        alarmState = true;
+        alarmCount = 0;
+      }
+    } else {
+      alarmCount = 0;
+    }
+  } else {
+    // currently alarming: stay in alarm until distance > leaveThreshold
+    if (distanceCm > leaveThreshold) {
+      alarmCount++;
+      if (alarmCount >= alarmLimit) {
+        alarmState = false;
+        alarmCount = 0;
+      }
+    } else {
+      alarmCount = 0;
+    }
+  }
+
+  // outputs based on alarmState
+  if (alarmState) {
     digitalWrite(ledPin, HIGH);
-    tone(buzzerPin, 1000); // 1kHz tone
+    tone(buzzerPin, 1000);
   } else {
     digitalWrite(ledPin, LOW);
     noTone(buzzerPin);
