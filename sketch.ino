@@ -6,7 +6,6 @@ const int buzzerPin = 6;
 
 long duration;            // time (µs) between send and receive
 float distanceCm;         // measured distance from sensor to water
-float normalCm = 50.0;    // example baseline normal (set after observing Serial)
 const float thresholdCm = 15.0; // critical level (enter alarm) in cm
 const float hysteresisCm = 3.0; // stay-in-alarm margin
 
