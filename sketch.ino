@@ -13,12 +13,13 @@ const int ledPin  = 7;
 const int buzzerPin = 6;
 const int gsmRx = 10;
 const int gsmTx = 11;
+const int buttonPin = 5;  // push button input
 
-SoftwareSerial sim800(gsmRx, gsmTx);
+SoftwareSerial sim800(gsmRx, gsmTx); // setting up GSM module
 
 long duration;            // time (µs) between send and receive
 float distanceCm;         // measured distance from sensor to water
-float prevdistanceCm;
+float prevdistanceCm = 16.0;
 const float thresholdCm = 15.0; // critical level (enter alarm) in cm also sms
 const float hysteresisCm = 3.0; // stay-in-alarm margin
 const float thresholdCm2 = 10.0; // critical level for call
@@ -27,6 +28,7 @@ const float thresholdCm2 = 10.0; // critical level for call
 const int alarmLimit = 3; // number of consecutive readings required to enter alarm
 int alarmCount = 0;
 bool alarmState = false;  // true when alarm is active
+bool answered = false; // true when call is answered
 
 void setup() {
   lcd.init();           // initialize LCD
@@ -35,8 +37,14 @@ void setup() {
   pinMode(echoPin, INPUT);
   pinMode(ledPin, OUTPUT);
   pinMode(buzzerPin, OUTPUT);
+  pinMode(buttonPin, INPUT_PULLUP);  // active LOW
+
   Serial.begin(9600);
-  sim800.begin(9600);
+  sim800.begin(9600); // initializing GSM module
+  sim800.setTimeout(200); // 200 ms read timeout
+  sim800.println("AT+COLP=1"); // show connected line
+  sim800.println("AT+CLCC=1"); // sometimes needed
+
   delay(2000);
 }
 
@@ -58,15 +66,30 @@ void loop() {
 
   Serial.print("Distance (cm): ");
   Serial.println(distanceCm);
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("Distance (cm):");
-  lcd.setCursor(0,1);
-  lcd.print(distanceCm);
+  static float lastShown = -1;
+  if (abs(distanceCm - lastShown) > 0.5) {
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("Distance (cm):");
+    lcd.setCursor(0,1);
+    lcd.print(distanceCm);
+    lastShown = distanceCm;
+  }
+
 
   // hysteresis thresholds
   float enterThreshold = thresholdCm;            // go into alarm when <= this
   float leaveThreshold = thresholdCm + hysteresisCm; // exit alarm when > this
+  // manual override: button pressed = safe
+  if (digitalRead(buttonPin) == LOW) {
+    alarmState = false;   // force safe
+    alarmCount = 0;       // reset debounce
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("Manual Override");
+    delay(2000);
+    lcd.clear();
+  }
 
   // debounce + hysteresis logic
   if (!alarmState) {
@@ -97,26 +120,24 @@ void loop() {
   if (alarmState) {
     digitalWrite(ledPin, HIGH);
     tone(buzzerPin, 1000);
-  } else {
-    digitalWrite(ledPin, LOW);
-    noTone(buzzerPin);
-  }
-
-  if (prevdistanceCm > thresholdCm && distanceCm <= thresholdCm){
-    // Deliver SMS only if water has reached threshold
+    if (prevdistanceCm > thresholdCm && distanceCm <= thresholdCm){
+    // Deliver SMS only when water crosses threshold
     sendSMS("+1234567890", "Alert! Possible Flood Detected.");
     delay(500);
-
   }
   if (prevdistanceCm > thresholdCm2 && distanceCm <= thresholdCm2){
-    // Make call only if water has reached threshold
+    // Make call only when water crosses threshold
     makeCall("+1234567890");
-    delay(15000);
-    hangUp();
+  }
+  } 
+  else {
+    digitalWrite(ledPin, LOW);
+    noTone(buzzerPin);
   }
   
   delay(500);
   prevdistanceCm = distanceCm; 
+  checkCallStatus();
 }
 
 void sendSMS(String number, String text) {
@@ -137,59 +158,74 @@ void sendSMS(String number, String text) {
 }
 
 void makeCall(String number) {
-  answered = false;   // reset flag
+  answered = false;   // reset flag before starting
 
-  // Start call
-  sim800.print("ATD");
-  sim800.print(number);
-  sim800.println(";");
-  lcd.setCursor(0,0);
-  lcd.print("Dialing...");
+  while (!answered && alarmState) {   // keep trying until answered or safe
+    // Start call
+    sim800.print("ATD");
+    sim800.print(number);
+    sim800.println(";");
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("Dialing...");
 
-  unsigned long start = millis();
+    unsigned long start = millis();
 
-  // Check status for 20 seconds
-  while (millis() - start < 20000) {
-    checkCallStatus();
+    // Check status for 20 seconds
+    while (millis() - start < 20000 && !answered && alarmState) {
+      checkCallStatus();
+    }
+
+    // Hang up after timeout or if answered
+    sim800.println("ATH");
 
     if (answered) {
-      lcd.clear()
+      lcd.clear();
       lcd.setCursor(0,0);
       lcd.print("Call answered!");
       delay(5000);
       lcd.clear();
-      break;  // exit early if picked
+      break;   // exit since picked
+    } 
+    else if (alarmState) {  // only redial if still unsafe
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print("No answer");
+      lcd.setCursor(0,1);
+      lcd.print("Redialing...");
+      delay(5000);  // wait before retry
+      lcd.clear();
+      // loop continues → will redial automatically
     }
   }
 
-  // Hang up after timeout or if answered
-  sim800.println("ATH");
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("Call ended.");
-
-  // Redial logic
-  if (!answered) {
+  // If alarm ended while calling
+  if (!alarmState && !answered) {
     lcd.clear();
     lcd.setCursor(0,0);
-    lcd.print("No answer");
-    lcd.setCursor(0,1);
-    lcd.print("Redialing...");
-    delay(5000);  // wait before retry
+    lcd.print("Safe now!");
+    delay(3000);
     lcd.clear();
-    makeCall(number);
   }
 }
 
+
 void checkCallStatus() {
-  sim800.println("AT+CLCC");   // Ask for call status
-  delay(500);
-
   while (sim800.available()) {
-    String response = sim800.readString();
+    String response = sim800.readStringUntil('\n');
+    response.trim();
+    if (response.length() == 0) continue;  // skip empty lines
 
-  if (response.indexOf(",0,") != -1) {
-    // Call active (answered)
-    answered = true;
+    Serial.println("URC: " + response);
+
+    if (response.indexOf("VOICE CALL: BEGIN") != -1) {
+      answered = true;
+    }
+    else if (response.indexOf("VOICE CALL: END") != -1) {
+      answered = false;
+    }
+    else if (response.indexOf("NO CARRIER") != -1 || response.indexOf("BUSY") != -1) {
+      answered = false;
+    }
   }
 }
