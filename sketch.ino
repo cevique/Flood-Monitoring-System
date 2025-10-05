@@ -1,42 +1,71 @@
+/*
+ Flood Management System - Robust Arduino Sketch
+ - Ultrasonic sensor measures distance to water (cm)
+ - Configurable consecutive-reading debounce: send SMS after N readings (5-20 recommended)
+ - If high water persists longer, place a voice call and activate gates/alarms
+ - LCD shows system status
+ - GSM (SIM800) used for SMS and calls via SoftwareSerial
+ - Manual override button (active LOW) resets alarm state
+
+ Wiring (example):
+  - Ultrasonic trigger -> digital pin 9
+  - Ultrasonic echo  -> digital pin 8
+  - LED (alarm)      -> digital pin 7 (through resistor)
+  - Buzzer           -> digital pin 6 (use transistor if current > 20mA)
+  - Button (override) -> digital pin 5 (wired to GND when pressed; uses INPUT_PULLUP)
+  - GSM TX -> Arduino RX (pin 10)
+  - GSM RX -> Arduino TX (pin 11)
+  - LCD on I2C -> SDA/SCL (A4/A5 on UNO), address 0x27 (adjust if different)
+  - Power: SIM800 needs a stable 4V supply with ~2A peak capability
+
+ Notes:
+  - Adjust smsTriggerCount between 5 and 20 as required.
+  - Adjust sampleIntervalMs to control how often you read sensor (e.g., 1000 ms).
+  - This sketch avoids spamming SMS: sends one SMS per alarm activation and then a call if condition persists.
+*/
+
+//  including libraries
+
 #include <SoftwareSerial.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
-
-// I2C address 0x27, 16 column, 2 row LCD
-LiquidCrystal_I2C lcd(0x27, 16, 2);
-
-// Flood monitor - debounce + hysteresis
-const int trigPin = 9;
-const int echoPin = 8;
-const int ledPin  = 7;
-const int buzzerPin = 6;
-const int gsmRx = 10;
-const int gsmTx = 11;
-
-SoftwareSerial sim800(gsmRx, gsmTx);
-
-long duration;            // time (µs) between send and receive
-float distanceCm;         // measured distance from sensor to water
-float prevdistanceCm;
-const float thresholdCm = 15.0; // critical level (enter alarm) in cm also sms
-const float hysteresisCm = 3.0; // stay-in-alarm margin
-const float thresholdCm2 = 10.0; // critical level for call
-
-// debounce / stability settings
-const int alarmLimit = 3; // number of consecutive readings required to enter alarm
-int alarmCount = 0;
-bool alarmState = false;  // true when alarm is active
+//  including modules
+#include "globals.h"
+#include "modules/sendSMS.h"
+#include "modules/makeCall.h"
+#include "modules/checkCallStatus.h"
 
 void setup() {
-  lcd.init();           // initialize LCD
-  lcd.backlight();      // turn on backlight
+ // pin
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
   pinMode(ledPin, OUTPUT);
   pinMode(buzzerPin, OUTPUT);
+  pinMode(buttonPin, INPUT_PULLUP);  // active LOW
+
+  digitalWrite(ledPin, LOW);
+  digitalWrite(buzzerPin, LOW);
+
+  // serials
   Serial.begin(9600);
   sim800.begin(9600);
+  sim800.setTimeout(200); // 200 ms read timeout
+  sim800.println("AT+COLP=1"); // show connected line
+  sim800.println("AT+CLCC=1"); // sometimes needed
+
+  // LCD
+  lcd.begin(16, 2);
+  lcd.backlight();
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Flood Monitor");
+  lcd.setCursor(0,1);
+  lcd.print("Initializing...");
+  delay(1500);
+  lcd.clear();
+
+  Serial.println("Setup complete.");
   delay(2000);
 }
 
@@ -58,15 +87,30 @@ void loop() {
 
   Serial.print("Distance (cm): ");
   Serial.println(distanceCm);
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("Distance (cm):");
-  lcd.setCursor(0,1);
-  lcd.print(distanceCm);
+  static float lastShown = -1;
+  if (abs(distanceCm - lastShown) > 0.5) {
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("Distance (cm):");
+    lcd.setCursor(0,1);
+    lcd.print(distanceCm);
+    lastShown = distanceCm;
+  }
+
 
   // hysteresis thresholds
-  float enterThreshold = thresholdCm;            // go into alarm when <= this
-  float leaveThreshold = thresholdCm + hysteresisCm; // exit alarm when > this
+  float enterThreshold = thresholdEnterCm;            // go into alarm when <= this
+  float leaveThreshold = thresholdEnterCm + hysteresisCm; // exit alarm when > this
+  // manual override: button pressed = safe
+  if (digitalRead(buttonPin) == LOW) {
+    alarmState = false;   // force safe
+    alarmCount = 0;       // reset debounce
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("Manual Override");
+    delay(2000);
+    lcd.clear();
+  }
 
   // debounce + hysteresis logic
   if (!alarmState) {
@@ -97,99 +141,23 @@ void loop() {
   if (alarmState) {
     digitalWrite(ledPin, HIGH);
     tone(buzzerPin, 1000);
-  } else {
+    if (prevdistanceCm > thresholdEnterCm && distanceCm <= thresholdEnterCm){
+    // Deliver SMS only when water crosses threshold
+    sendSMS(authorityNumber, "⚠ Alert! River water level rising above safe limit.");
+    delay(500);
+  }
+  if (prevdistanceCm > thresholdEnterCm2 && distanceCm <= thresholdEnterCm2){
+    // Make call only when water crosses threshold
+    makeCall(authorityNumber);
+  }
+  } 
+  else {
     digitalWrite(ledPin, LOW);
     noTone(buzzerPin);
-  }
-
-  if (prevdistanceCm > thresholdCm && distanceCm <= thresholdCm){
-    // Deliver SMS only if water has reached threshold
-    sendSMS("+1234567890", "Alert! Possible Flood Detected.");
-    delay(500);
-
-  }
-  if (prevdistanceCm > thresholdCm2 && distanceCm <= thresholdCm2){
-    // Make call only if water has reached threshold
-    makeCall("+1234567890");
-    delay(15000);
-    hangUp();
   }
   
   delay(500);
   prevdistanceCm = distanceCm; 
+  checkCallStatus();
 }
 
-void sendSMS(String number, String text) {
-  // AT commands to send SMS.
-  sim800.println("AT+CMGF=1");    
-  delay(1000);
-  sim800.print("AT+CMGS=\"");
-  sim800.print(number);
-  sim800.println("\"");
-  delay(1000);
-  sim800.print(text);
-  delay(500);
-  sim800.write(26);
-  lcd.setCursor(0,0);
-  lcd.print("SMS Sent!");
-  delay(5000);
-  lcd.clear();
-}
-
-void makeCall(String number) {
-  answered = false;   // reset flag
-
-  // Start call
-  sim800.print("ATD");
-  sim800.print(number);
-  sim800.println(";");
-  lcd.setCursor(0,0);
-  lcd.print("Dialing...");
-
-  unsigned long start = millis();
-
-  // Check status for 20 seconds
-  while (millis() - start < 20000) {
-    checkCallStatus();
-
-    if (answered) {
-      lcd.clear()
-      lcd.setCursor(0,0);
-      lcd.print("Call answered!");
-      delay(5000);
-      lcd.clear();
-      break;  // exit early if picked
-    }
-  }
-
-  // Hang up after timeout or if answered
-  sim800.println("ATH");
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("Call ended.");
-
-  // Redial logic
-  if (!answered) {
-    lcd.clear();
-    lcd.setCursor(0,0);
-    lcd.print("No answer");
-    lcd.setCursor(0,1);
-    lcd.print("Redialing...");
-    delay(5000);  // wait before retry
-    lcd.clear();
-    makeCall(number);
-  }
-}
-
-void checkCallStatus() {
-  sim800.println("AT+CLCC");   // Ask for call status
-  delay(500);
-
-  while (sim800.available()) {
-    String response = sim800.readString();
-
-  if (response.indexOf(",0,") != -1) {
-    // Call active (answered)
-    answered = true;
-  }
-}
