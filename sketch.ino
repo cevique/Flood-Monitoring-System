@@ -32,9 +32,9 @@
 
 //  including modules
 #include "globals.h"
-#include "modules/sendSMS.h"
-#include "modules/makeCall.h"
-#include "modules/checkCallStatus.h"
+#include "sendSMS.h"
+#include "makeCall.h"
+#include "checkCallStatus.h"
 
 void setup() {
  // pin
@@ -55,7 +55,7 @@ void setup() {
   sim800.println("AT+CLCC=1"); // sometimes needed
 
   // LCD
-  lcd.begin(16, 2);
+  lcd.init();
   lcd.backlight();
   lcd.clear();
   lcd.setCursor(0,0);

@@ -28,7 +28,7 @@ bool alarmState = false;  // true when alarm is active
 bool answered = false; // true when call is answered
 
 // (address, En, Rw, Rs, d4, d5, d6, d7, Bl, BlPol)
-LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 SoftwareSerial sim800(RX, TX); // setting up GSM module
 
 // Emergency contact number
