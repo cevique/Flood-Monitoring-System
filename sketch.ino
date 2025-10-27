@@ -4,7 +4,7 @@
 
 // Flood monitor - debounce + hysteresis
 const int trigPin = 23;    // AJ-SR04M trigger ultrasonic wave 40kHz
-const int echoPin = 8;     //  AJ-SR04M receive reflected ultrasonnic wave
+const int echoPin = 22;     //  AJ-SR04M receive reflected ultrasonnic wave
 const int ledPin = 19;     //  Control LED ON/OFF state
 const int buzzerPin = 18;  //  Control Buzzer ON/OFF state
 // const int RX = 10; //  Arduino receive signal transmitted by GSM
@@ -25,9 +25,7 @@ bool alarmState = false;      // true when alarm is active
 bool answered = false;        // true when call is answered
 bool manualOverride = false;  // false = normal mode, true = override active
 
-// (address, En, Rw, Rs, d4, d5, d6, d7, Bl, BlPol)
 LiquidCrystal_I2C lcd(0x27, 16, 2);
-// SoftwareSerial sim800(RX, TX); // setting up GSM module
 
 void setup() {
   lcd.init();       // initialize LCD
@@ -39,106 +37,7 @@ void setup() {
   pinMode(buttonPin, INPUT_PULLUP);  // active LOW
   pinMode(buttonPin2, INPUT_PULLUP);
   Serial.begin(115200);
-  // sim800.begin(9600); // initializing GSM module0
-  // sim800.setTimeout(200); // 200 ms read timeout
-  // sim800.println("AT+COLP=1"); // show connected line
-  // sim800.println("AT+CLCC=1"); // sometimes needed
-
-  // delay(2000);
 }
-
-// void sendSMS(String number, String text) {
-//   // AT commands to send SMS.
-//   sim800.println("AT+CMGF=1");
-//   delay(1000);
-//   sim800.print("AT+CMGS=\"");
-//   sim800.print(number);
-//   sim800.println("\"");
-//   delay(1000);
-//   sim800.print(text);
-//   delay(500);
-//   sim800.write(26);
-//   lcd.setCursor(0,0);
-//   lcd.print("SMS Sent!");
-//   delay(5000);
-//   lcd.clear();
-// }
-
-// void makeCall(String number) {
-//   answered = false;   // reset flag before starting
-
-//   while (!answered && alarmState) {   // keep trying until answered or safe
-//     // Start call
-//     sim800.print("ATD");
-//     sim800.print(number);
-//     sim800.println(";");
-//     lcd.clear();
-//     lcd.setCursor(0,0);
-//     lcd.print("Dialing...");
-
-//     unsigned long start = millis();
-
-//     // Check status for 20 seconds
-//     while (millis() - start < 20000 && !answered && alarmState) {
-//       checkCallStatus();
-//     }
-
-//     // Hang up after timeout or if answered
-//     sim800.println("ATH");
-
-//     if (answered) {
-//       lcd.clear();
-//       lcd.setCursor(0,0);
-//       lcd.print("Call answered!");
-//       delay(5000);
-//       lcd.clear();
-//       break;   // exit since picked
-//     }
-//     else if (alarmState) {  // only redial if still unsafe
-//       lcd.clear();
-//       lcd.setCursor(0,0);
-//       lcd.print("No answer");
-//       lcd.setCursor(0,1);
-//       lcd.print("Redialing...");
-//       delay(5000);  // wait before retry
-//       lcd.clear();
-//       // loop continues → will redial automatically
-//     }
-//   }
-
-//   // If alarm ended while calling
-//   if (!alarmState && !answered) {
-//     lcd.clear();
-//     lcd.setCursor(0,0);
-//     lcd.print("Safe now!");
-//     delay(3000);
-//     lcd.clear();
-//   }
-// }
-
-
-// void checkCallStatus() {
-//   while (sim800.available()) {
-//     String response = sim800.readStringUntil('\n');
-//     response.trim();
-//     if (response.length() == 0) continue;  // skip empty lines
-
-//     Serial.println("URC: " + response);
-
-//     if (response.indexOf("VOICE CALL: BEGIN") != -1) {
-//       answered = true;
-//     }
-//     else if (response.indexOf("VOICE CALL: END") != -1) {
-//       answered = false;
-//     }
-//     else if (response.indexOf("NO CARRIER") != -1 || response.indexOf("BUSY") != -1) {
-//       answered = false;
-//     }
-//   }
-// }
-
-
-
 
 void override() {
   // --- Button 1 pressed: activate manual override ---
@@ -209,9 +108,6 @@ void loop() {
   // hysteresis thresholds
   float enterThreshold = thresholdCm;                 // go into alarm when <= this
   float leaveThreshold = thresholdCm + hysteresisCm;  // exit alarm when > this
-  // manual override: button pressed = safe
-  // Skip alarm logic if manual override is active
-  // If manual override is active, skip alarm logic entirely
   override();
 
   if (manualOverride) {
@@ -267,9 +163,6 @@ void loop() {
       lcd.print("Possible Flood");  //  rising trend detected
       distanceCm = readSensor();
       delay(150);
-      //   // Deliver SMS only when water crosses threshold
-      //   sendSMS("+1234567890", "Alert! Possible Flood Detected.");
-      //   delay(500);
     }
 
     while (distanceCm < thresholdCm2) {
@@ -283,8 +176,6 @@ void loop() {
       lcd.print("Flood Incoming!");  //  threshold exceeded
       distanceCm = readSensor();
       delay(150);
-      //   // Make call only when water crosses threshold
-      //   makeCall("+1234567890");
     }
   } else {
     digitalWrite(ledPin, LOW);
@@ -293,5 +184,4 @@ void loop() {
 
   delay(500);
   prevdistanceCm = distanceCm;
-  // checkCallStatus();
 }
