@@ -2,46 +2,43 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
-
-
-
 // Flood monitor - debounce + hysteresis
-const int trigPin = 9;  // AJ-SR04M trigger ultrasonic wave 40kHz
-const int echoPin = 8;  //  AJ-SR04M receive reflected ultrasonnic wave
-const int ledPin  = 7;  //  Control LED ON/OFF state
-const int buzzerPin = 6;  //  Control Buzzer ON/OFF state
+const int trigPin = 23;    // AJ-SR04M trigger ultrasonic wave 40kHz
+const int echoPin = 8;     //  AJ-SR04M receive reflected ultrasonnic wave
+const int ledPin = 19;     //  Control LED ON/OFF state
+const int buzzerPin = 18;  //  Control Buzzer ON/OFF state
 // const int RX = 10; //  Arduino receive signal transmitted by GSM
 // const int TX = 11;  //  Arduino transmits signal received by GSM
 const int buttonPin = 5;  // push button input
 const int buttonPin2 = 4;
-long duration;            // time (µs) between send and receive
-float distanceCm;         // measured distance from sensor to water
-float prevdistanceCm = 31.0;  //  can be anything outside threshold to run code for 1st time
-const float thresholdCm = 30.0; // critical level (enter alarm) in cm also sms
-const float hysteresisCm = 3.0; // stay-in-alarm margin
-const float thresholdCm2 = 25.0; // critical level for call
+long duration;                    // time (µs) between send and receive
+float distanceCm;                 // measured distance from sensor to water
+float prevdistanceCm = 31.0;      //  can be anything outside threshold to run code for 1st time
+const float thresholdCm = 30.0;   // critical level (enter alarm) in cm also sms
+const float hysteresisCm = 3.0;   // stay-in-alarm margin
+const float thresholdCm2 = 25.0;  // critical level for call
 
 // debounce / stability settings
-const int alarmLimit = 3; // number of consecutive readings required to enter alarm
+const int alarmLimit = 3;  // number of consecutive readings required to enter alarm
 int alarmCount = 0;
-bool alarmState = false;  // true when alarm is active
-bool answered = false; // true when call is answered
+bool alarmState = false;      // true when alarm is active
+bool answered = false;        // true when call is answered
 bool manualOverride = false;  // false = normal mode, true = override active
 
 // (address, En, Rw, Rs, d4, d5, d6, d7, Bl, BlPol)
-LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 // SoftwareSerial sim800(RX, TX); // setting up GSM module
 
 void setup() {
-  lcd.begin(16,2);           // initialize LCD
-  lcd.backlight();      // turn on backlight
+  lcd.init();       // initialize LCD
+  lcd.backlight();  // turn on backlight
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
   pinMode(ledPin, OUTPUT);
   pinMode(buzzerPin, OUTPUT);
   pinMode(buttonPin, INPUT_PULLUP);  // active LOW
   pinMode(buttonPin2, INPUT_PULLUP);
-  Serial.begin(9600);
+  Serial.begin(115200);
   // sim800.begin(9600); // initializing GSM module0
   // sim800.setTimeout(200); // 200 ms read timeout
   // sim800.println("AT+COLP=1"); // show connected line
@@ -52,7 +49,7 @@ void setup() {
 
 // void sendSMS(String number, String text) {
 //   // AT commands to send SMS.
-//   sim800.println("AT+CMGF=1");    
+//   sim800.println("AT+CMGF=1");
 //   delay(1000);
 //   sim800.print("AT+CMGS=\"");
 //   sim800.print(number);
@@ -96,7 +93,7 @@ void setup() {
 //       delay(5000);
 //       lcd.clear();
 //       break;   // exit since picked
-//     } 
+//     }
 //     else if (alarmState) {  // only redial if still unsafe
 //       lcd.clear();
 //       lcd.setCursor(0,0);
@@ -181,61 +178,54 @@ void override() {
   }
 }
 
-
-
-
-
-double readSensor(){
+double readSensor() {
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
 
-  duration = pulseIn(echoPin, HIGH); // timeout 30ms
+  duration = pulseIn(echoPin, HIGH);  // timeout 30ms
   if (duration == 0) {
-    distanceCm = prevdistanceCm; // no echo
+    distanceCm = prevdistanceCm;  // no echo
   } else {
-    distanceCm = duration /58.00;
+    distanceCm = duration / 58.00;
   }
   return distanceCm;
 }
 
 void loop() {
   distanceCm = readSensor();
-  if (distanceCm > thresholdCm ){
-  Serial.print("Distance (cm): ");
-  Serial.println(distanceCm);
+  if (distanceCm > thresholdCm) {
+    Serial.print("Distance (cm): ");
+    Serial.println(distanceCm);
 
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("Distance: ");
-  lcd.print(distanceCm);
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Distance: ");
+    lcd.print(distanceCm);
   }
-  
+
   // hysteresis thresholds
-  float enterThreshold = thresholdCm;            // go into alarm when <= this
-  float leaveThreshold = thresholdCm + hysteresisCm; // exit alarm when > this
+  float enterThreshold = thresholdCm;                 // go into alarm when <= this
+  float leaveThreshold = thresholdCm + hysteresisCm;  // exit alarm when > this
   // manual override: button pressed = safe
   // Skip alarm logic if manual override is active
   // If manual override is active, skip alarm logic entirely
   override();
 
   if (manualOverride) {
-  digitalWrite(ledPin, LOW);
-  noTone(buzzerPin);
+    digitalWrite(ledPin, LOW);
+    noTone(buzzerPin);
 
-  lcd.setCursor(0, 0);
-  lcd.print("Override Active ");
-  lcd.setCursor(0, 1);
-  lcd.print("System Paused   ");
+    lcd.setCursor(0, 0);
+    lcd.print("Override Active ");
+    lcd.setCursor(0, 1);
+    lcd.print("System Paused   ");
 
-  delay(300);
-  return;  // skip the rest of the loop
-}
-
-
-
+    delay(300);
+    return;  // skip the rest of the loop
+  }
 
   // debounce + hysteresis logic
   if (!alarmState) {
@@ -266,45 +256,42 @@ void loop() {
   if (alarmState) {
     digitalWrite(ledPin, HIGH);
     tone(buzzerPin, 1000);
-    while (distanceCm <= thresholdCm && distanceCm >= thresholdCm2){
+    while (distanceCm <= thresholdCm && distanceCm >= thresholdCm2) {
       override();
-      lcd.setCursor(0,0);
+      lcd.setCursor(0, 0);
       lcd.print("                ");
-      lcd.setCursor(0,0);
+      lcd.setCursor(0, 0);
       lcd.print("Distance: ");
       lcd.print(distanceCm);
-      lcd.setCursor(0,1);
-      lcd.print("Possible Flood");
+      lcd.setCursor(0, 1);
+      lcd.print("Possible Flood");  //  rising trend detected
       distanceCm = readSensor();
       delay(150);
-  //   // Deliver SMS only when water crosses threshold
-  //   sendSMS("+1234567890", "Alert! Possible Flood Detected.");
-  //   delay(500);
+      //   // Deliver SMS only when water crosses threshold
+      //   sendSMS("+1234567890", "Alert! Possible Flood Detected.");
+      //   delay(500);
+    }
 
-    }
-    
-    while (distanceCm < thresholdCm2){
+    while (distanceCm < thresholdCm2) {
       override();
-      lcd.setCursor(0,0);
+      lcd.setCursor(0, 0);
       lcd.print("                ");
-      lcd.setCursor(0,0);
+      lcd.setCursor(0, 0);
       lcd.print("Distance: ");
       lcd.print(distanceCm);
-      lcd.setCursor(0,1);
-      lcd.print("Flood Incoming!!");
+      lcd.setCursor(0, 1);
+      lcd.print("Flood Incoming!");  //  threshold exceeded
       distanceCm = readSensor();
       delay(150);
-  //   // Make call only when water crosses threshold
-  //   makeCall("+1234567890");
+      //   // Make call only when water crosses threshold
+      //   makeCall("+1234567890");
     }
-  } 
-  else {
+  } else {
     digitalWrite(ledPin, LOW);
     noTone(buzzerPin);
   }
-  
+
   delay(500);
-  prevdistanceCm = distanceCm; 
+  prevdistanceCm = distanceCm;
   // checkCallStatus();
 }
-
