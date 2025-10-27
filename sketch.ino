@@ -4,7 +4,7 @@
 
 // Flood monitor - debounce + hysteresis
 const int trigPin = 23;    // AJ-SR04M trigger ultrasonic wave 40kHz
-const int echoPin = 22;     //  AJ-SR04M receive reflected ultrasonnic wave
+const int echoPin = 35;     //  AJ-SR04M receive reflected ultrasonnic wave
 const int ledPin = 19;     //  Control LED ON/OFF state
 const int buzzerPin = 18;  //  Control Buzzer ON/OFF state
 // const int RX = 10; //  Arduino receive signal transmitted by GSM
@@ -29,6 +29,8 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 void setup() {
   lcd.init();       // initialize LCD
+  Wire.begin();
+  Wire.setClock(400000);
   lcd.backlight();  // turn on backlight
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
@@ -40,24 +42,25 @@ void setup() {
 }
 
 void override() {
-  // --- Button 1 pressed: activate manual override ---
-  if (digitalRead(buttonPin) == LOW) {
-    manualOverride = true;
-    alarmState = false;
-    alarmCount = 0;
+  // Button 1 pressed: activate manual override
+  if (distanceCm <= thresholdCm) {
+    if (digitalRead(buttonPin) == LOW) {
+      manualOverride = true;
+      alarmState = false;
+      alarmCount = 0;
 
-    digitalWrite(ledPin, LOW);
-    noTone(buzzerPin);
+      digitalWrite(ledPin, LOW);
+      noTone(buzzerPin);
 
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Manual Override");
-    delay(800);
-    lcd.clear();
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Manual Override");
+      delay(800);
+      lcd.clear();
+    }
   }
-
-  // --- Button 2 pressed: cancel manual override ---
-  if (digitalRead(buttonPin2) == LOW) {
+  // Button 2 pressed: cancel manual override
+  if (digitalRead(buttonPin2) == LOW && manualOverride == true) {
     manualOverride = false;
 
     // reset counters and state so system restarts fresh
@@ -84,7 +87,7 @@ double readSensor() {
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
 
-  duration = pulseIn(echoPin, HIGH);  // timeout 30ms
+  duration = pulseIn(echoPin, HIGH); 
   if (duration == 0) {
     distanceCm = prevdistanceCm;  // no echo
   } else {
@@ -99,16 +102,33 @@ void loop() {
     Serial.print("Distance (cm): ");
     Serial.println(distanceCm);
 
-    lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("Distance: ");
     lcd.print(distanceCm);
+    lcd.print("   ");
+    lcd.setCursor(0, 1);
+    lcd.print("                ");
+
+
   }
 
   // hysteresis thresholds
   float enterThreshold = thresholdCm;                 // go into alarm when <= this
   float leaveThreshold = thresholdCm + hysteresisCm;  // exit alarm when > this
   override();
+
+  // Auto cancel manual override when leaving threshold
+  if (manualOverride && distanceCm > thresholdCm) {
+    manualOverride = false;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Override AutoOff");
+    lcd.setCursor(0, 1);
+    lcd.print("Normal Mode     ");
+    delay(800);
+    lcd.clear();
+  }
+
 
   if (manualOverride) {
     digitalWrite(ledPin, LOW);
@@ -155,12 +175,11 @@ void loop() {
     while (distanceCm <= thresholdCm && distanceCm >= thresholdCm2) {
       override();
       lcd.setCursor(0, 0);
-      lcd.print("                ");
-      lcd.setCursor(0, 0);
       lcd.print("Distance: ");
       lcd.print(distanceCm);
+      lcd.print("   ");  // clear leftover chars
       lcd.setCursor(0, 1);
-      lcd.print("Possible Flood");  //  rising trend detected
+      lcd.print("Possible Flood   ");
       distanceCm = readSensor();
       delay(150);
     }
@@ -168,15 +187,15 @@ void loop() {
     while (distanceCm < thresholdCm2) {
       override();
       lcd.setCursor(0, 0);
-      lcd.print("                ");
-      lcd.setCursor(0, 0);
       lcd.print("Distance: ");
       lcd.print(distanceCm);
+      lcd.print("   ");
       lcd.setCursor(0, 1);
-      lcd.print("Flood Incoming!");  //  threshold exceeded
+      lcd.print("Flood Incoming!  ");
       distanceCm = readSensor();
       delay(150);
     }
+
   } else {
     digitalWrite(ledPin, LOW);
     noTone(buzzerPin);
