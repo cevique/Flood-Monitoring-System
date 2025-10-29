@@ -1,10 +1,28 @@
 // #include <SoftwareSerial.h>
+#include <WiFi.h>
 #include <Wire.h>
+#include <PubSubClient.h>
 #include <LiquidCrystal_I2C.h>
+
+// ===== WiFi + ThingsBoard =====
+const char* ssid = "HCCS FIRST FLOOR";
+const char* password = "HCCSBLOCKA@2016";
+
+const char* mqtt_server = "192.168.18.41";  // your ThingsBoard IP
+const int mqtt_port = 1883;
+const char* access_token = "0if4opdt9rom99fgz1al";  // copy from device details
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+// counters for pie chart
+int floodPossibleCount = 0;
+int floodIncomingCount = 0;
+int normalCount = 0;
 
 // Flood monitor - debounce + hysteresis
 const int trigPin = 23;    // AJ-SR04M trigger ultrasonic wave 40kHz
-const int echoPin = 35;     //  AJ-SR04M receive reflected ultrasonnic wave
+const int echoPin = 35;    //  AJ-SR04M receive reflected ultrasonnic wave
 const int ledPin = 19;     //  Control LED ON/OFF state
 const int buzzerPin = 18;  //  Control Buzzer ON/OFF state
 // const int RX = 10; //  Arduino receive signal transmitted by GSM
@@ -28,7 +46,29 @@ bool manualOverride = false;  // false = normal mode, true = override active
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 void setup() {
-  lcd.init();       // initialize LCD
+  // --- WiFi Connect ---
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+
+  // --- MQTT setup ---
+  client.setServer(mqtt_server, mqtt_port);
+  while (!client.connected()) {
+    Serial.print("Connecting to ThingsBoard...");
+    if (client.connect("ESP32Client", access_token, NULL)) {
+      Serial.println("connected!");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 3s");
+      delay(3000);
+    }
+  }
+  lcd.init();  // initialize LCD
   Wire.begin();
   Wire.setClock(400000);
   lcd.backlight();  // turn on backlight
@@ -87,7 +127,7 @@ double readSensor() {
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
 
-  duration = pulseIn(echoPin, HIGH); 
+  duration = pulseIn(echoPin, HIGH);
   if (duration == 0) {
     distanceCm = prevdistanceCm;  // no echo
   } else {
@@ -95,6 +135,33 @@ double readSensor() {
   }
   return distanceCm;
 }
+
+void sendToThingsBoard(float distance, String status) {
+  // Build JSON string manually
+  String payload = "{\"distance\":";
+  payload += String(distance, 2);
+  payload += ",\"status\":\"" + status + "\"";
+
+  // add counts for pie chart
+  payload += ",\"normalCount\":" + String(normalCount);
+  payload += ",\"floodPossibleCount\":" + String(floodPossibleCount);
+  payload += ",\"floodIncomingCount\":" + String(floodIncomingCount);
+  payload += "}";
+
+  Serial.print("Sending payload: ");
+  Serial.println(payload);
+
+  // publish
+  if (client.connected()) {
+    client.publish("v1/devices/me/telemetry", payload.c_str());
+  } else {
+    Serial.println("MQTT disconnected, reconnecting...");
+    if (client.connect("ESP32Client", access_token, NULL)) {
+      client.publish("v1/devices/me/telemetry", payload.c_str());
+    }
+  }
+}
+
 
 void loop() {
   distanceCm = readSensor();
@@ -108,8 +175,6 @@ void loop() {
     lcd.print("   ");
     lcd.setCursor(0, 1);
     lcd.print("                ");
-
-
   }
 
   // hysteresis thresholds
@@ -168,6 +233,8 @@ void loop() {
     }
   }
 
+  String status = "Normal";
+
   // outputs based on alarmState
   if (alarmState) {
     digitalWrite(ledPin, HIGH);
@@ -180,7 +247,10 @@ void loop() {
       lcd.print("   ");  // clear leftover chars
       lcd.setCursor(0, 1);
       lcd.print("Possible Flood   ");
+      status = "Flood Possible";
+      floodPossibleCount++;
       distanceCm = readSensor();
+      sendToThingsBoard(distanceCm, status);
       delay(150);
     }
 
@@ -192,14 +262,23 @@ void loop() {
       lcd.print("   ");
       lcd.setCursor(0, 1);
       lcd.print("Flood Incoming!  ");
+      status = "Flood Incoming";
+      floodIncomingCount++;
       distanceCm = readSensor();
+      sendToThingsBoard(distanceCm, status);
       delay(150);
     }
 
   } else {
     digitalWrite(ledPin, LOW);
+    normalCount++;
+    sendToThingsBoard(distanceCm, status);
     noTone(buzzerPin);
   }
+
+  sendToThingsBoard(distanceCm, status);
+  client.loop();  // keep MQTT alive
+
 
   delay(500);
   prevdistanceCm = distanceCm;
