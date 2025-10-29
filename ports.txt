@@ -1,2 +1,3 @@
-PostgreSQL Post: 5432
-Mosquitto Post: 1883
+PostgreSQL Port: 5432
+Thingsboard Port: 8080
+mqtt Port: 1883
